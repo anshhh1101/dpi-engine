@@ -2,7 +2,9 @@ package com.dpi;
 
 import java.util.Optional;
 
+import com.dpi.model.ParsedPacket;
 import com.dpi.model.RawPacket;
+import com.dpi.parser.PacketParser;
 import com.dpi.pcap.PcapReader;
 
 public class Main {
@@ -12,46 +14,53 @@ public class Main {
         String inputFile = args.length > 0 ? args[0] : "test_dpi.pcap";
 
         System.out.println("========================================");
-        System.out.println("  DPI Engine - Day 1: PCAP Reader Test");
+        System.out.println("  DPI Engine - Day 2: Packet Parser");
         System.out.println("========================================");
-        System.out.println("Reading: " + inputFile);
         System.out.println();
 
         PcapReader reader = new PcapReader();
         reader.open(inputFile);
 
-        int  packetCount = 0;
-        long totalBytes  = 0;
+        int packetCount = 0;
+        int tcpCount    = 0;
+        int udpCount    = 0;
+        int otherCount  = 0;
 
         Optional<RawPacket> pkt;
         while ((pkt = reader.readNextPacket()).isPresent()) {
             RawPacket raw = pkt.get();
             packetCount++;
-            totalBytes += raw.data.length;
 
-            if (packetCount <= 10) {
-                System.out.printf("Packet %3d | time=%-18s | len=%4d bytes%n",
-                        packetCount,
-                        raw.getTimestamp(),
-                        raw.data.length);
+            ParsedPacket parsed = PacketParser.parse(raw);
 
-                System.out.print("           | hex: ");
-                int preview = Math.min(16, raw.data.length);
-                for (int i = 0; i < preview; i++) {
-                    System.out.printf("%02x ", raw.data[i] & 0xFF);
-                }
-                System.out.println();
+            if (!parsed.isIPv4) {
+                otherCount++;
+                System.out.printf("Packet %3d | Non-IPv4 (EtherType: 0x%04x)%n",
+                        packetCount, parsed.etherType);
+                continue;
             }
+
+            String proto = parsed.hasTcp ? "TCP" : parsed.hasUdp ? "UDP" : "OTHER";
+            if (parsed.hasTcp) tcpCount++;
+            else if (parsed.hasUdp) udpCount++;
+            else otherCount++;
+
+            System.out.printf("Packet %3d | %s  %-15s:%-5d  →  %-15s:%-5d | payload=%d bytes%n",
+                    packetCount,
+                    proto,
+                    PacketParser.intToIp(parsed.srcIp), parsed.srcPort,
+                    PacketParser.intToIp(parsed.dstIp), parsed.dstPort,
+                    parsed.payloadLength);
         }
 
         reader.close();
 
         System.out.println();
         System.out.println("========================================");
-        System.out.printf("  Total packets : %d%n", packetCount);
-        System.out.printf("  Total bytes   : %,d%n", totalBytes);
-        System.out.printf("  Avg pkt size  : %.0f bytes%n",
-                packetCount > 0 ? (double) totalBytes / packetCount : 0);
+        System.out.printf("  Total   : %d packets%n", packetCount);
+        System.out.printf("  TCP     : %d%n", tcpCount);
+        System.out.printf("  UDP     : %d%n", udpCount);
+        System.out.printf("  Other   : %d%n", otherCount);
         System.out.println("========================================");
     }
 }
