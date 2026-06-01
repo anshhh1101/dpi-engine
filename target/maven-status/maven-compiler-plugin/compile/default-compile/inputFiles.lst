@@ -5,4 +5,5 @@ C:\Users\KIIT0001\Desktop\dpi-engine\src\main\java\com\dpi\parser\PacketParser.j
 C:\Users\KIIT0001\Desktop\dpi-engine\src\main\java\com\dpi\model\ParsedPacket.java
 C:\Users\KIIT0001\Desktop\dpi-engine\src\main\java\com\dpi\model\FiveTuple.java
 C:\Users\KIIT0001\Desktop\dpi-engine\src\main\java\com\dpi\pcap\PcapReader.java
+C:\Users\KIIT0001\Desktop\dpi-engine\src\main\java\com\dpi\inspector\SNIExtractor.java
 C:\Users\KIIT0001\Desktop\dpi-engine\src\main\java\com\dpi\model\RawPacket.java
