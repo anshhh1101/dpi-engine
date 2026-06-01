@@ -27,13 +27,9 @@ public class DpiEngine {
     private int forwarded    = 0;
     private int dropped      = 0;
 
-    // ── Rule configuration ────────────────────────────────────────────────────
-
-    public void blockIp(String ip)       { ruleEngine.blockIp(ip); }
-    public void blockApp(AppType app)    { ruleEngine.blockApp(app); }
-    public void blockDomain(String d)    { ruleEngine.blockDomain(d); }
-
-    // ── Main processing loop ──────────────────────────────────────────────────
+    public void blockIp(String ip)     { ruleEngine.blockIp(ip); }
+    public void blockApp(AppType app)  { ruleEngine.blockApp(app); }
+    public void blockDomain(String d)  { ruleEngine.blockDomain(d); }
 
     public void process(String inputFile, String outputFile) throws Exception {
 
@@ -51,7 +47,6 @@ public class DpiEngine {
 
             ParsedPacket parsed = PacketParser.parse(raw);
             if (!parsed.isIPv4) {
-                // Non-IP traffic — forward as-is
                 writer.writePacket(raw.data, raw.timestampSec, raw.timestampUsec);
                 forwarded++;
                 continue;
@@ -60,20 +55,13 @@ public class DpiEngine {
             if (parsed.hasTcp) tcpPackets++;
             if (parsed.hasUdp) udpPackets++;
 
-            // Update flow state (SNI extraction happens here)
             Flow flow = flowTracker.processPacket(parsed);
-
-            // Convert src IP int to string for rule check
             String srcIpStr = PacketParser.intToIp(parsed.srcIp);
 
-            // Check if this flow should be blocked
-            boolean block = ruleEngine.isBlocked(srcIpStr, flow.appType, flow.sni);
-
-            if (block) {
+            if (ruleEngine.isBlocked(srcIpStr, flow.appType, flow.sni)) {
                 flow.blocked = true;
             }
 
-            // Flow-based decision: if flow is marked blocked, drop ALL its packets
             if (flow.blocked) {
                 dropped++;
             } else {
@@ -86,59 +74,74 @@ public class DpiEngine {
         writer.close();
     }
 
-    // ── Print the full report ─────────────────────────────────────────────────
-
     public void printReport() {
+        int w = 52;
+        String line = "=".repeat(w);
+        String thin = "-".repeat(w);
+
         System.out.println();
-        System.out.println("=================================================");
-        System.out.println("         DPI ENGINE - PROCESSING REPORT          ");
-        System.out.println("=================================================");
-        System.out.printf("  Total Packets  : %d%n",   totalPackets);
-        System.out.printf("  Total Bytes    : %,d%n",  totalBytes);
-        System.out.printf("  TCP Packets    : %d%n",   tcpPackets);
-        System.out.printf("  UDP Packets    : %d%n",   udpPackets);
-        System.out.printf("  Unique Flows   : %d%n",   flowTracker.getTotalFlows());
-        System.out.println("-------------------------------------------------");
-        System.out.printf("  Forwarded      : %d%n",   forwarded);
-        System.out.printf("  Dropped        : %d%n",   dropped);
-        System.out.println("=================================================");
-        System.out.println("         APPLICATION BREAKDOWN                   ");
-        System.out.println("=================================================");
+        System.out.println(line);
+        System.out.println(center("DPI ENGINE - FINAL REPORT", w));
+        System.out.println(line);
+        System.out.printf("  %-20s : %d%n",    "Total Packets",  totalPackets);
+        System.out.printf("  %-20s : %,d bytes%n","Total Bytes", totalBytes);
+        System.out.printf("  %-20s : %d%n",    "TCP Packets",    tcpPackets);
+        System.out.printf("  %-20s : %d%n",    "UDP Packets",    udpPackets);
+        System.out.printf("  %-20s : %d%n",    "Unique Flows",   flowTracker.getTotalFlows());
+        System.out.println(thin);
+        System.out.printf("  %-20s : %d%n",    "Forwarded",      forwarded);
+        System.out.printf("  %-20s : %d%n",    "Dropped",        dropped);
+        System.out.println(line);
 
-        // Count packets per AppType
-        Map<AppType, Integer> appCounts = new LinkedHashMap<>();
+        // App breakdown
+        System.out.println(center("APPLICATION BREAKDOWN", w));
+        System.out.println(line);
+
+        Map<AppType, int[]> appStats = new LinkedHashMap<>();
         for (Flow flow : flowTracker.getAllFlows()) {
-            appCounts.merge(flow.appType, flow.packetCount, Integer::sum);
+            appStats.computeIfAbsent(flow.appType, k -> new int[2]);
+            appStats.get(flow.appType)[0] += flow.packetCount;
+            if (flow.blocked) appStats.get(flow.appType)[1] = 1;
         }
 
-        // Sort by count descending
-        List<Map.Entry<AppType, Integer>> sorted = new ArrayList<>(appCounts.entrySet());
-        sorted.sort(Map.Entry.comparingByValue(Comparator.reverseOrder()));
+        List<Map.Entry<AppType, int[]>> sorted = new ArrayList<>(appStats.entrySet());
+        sorted.sort((a, b) -> b.getValue()[0] - a.getValue()[0]);
 
-        for (Map.Entry<AppType, Integer> entry : sorted) {
+        for (var entry : sorted) {
             double pct = totalPackets > 0
-                    ? (entry.getValue() * 100.0 / totalPackets) : 0;
-            // Check if this app type is blocked
-            boolean isBlocked = flowTracker.getAllFlows().stream()
-                    .anyMatch(f -> f.appType == entry.getKey() && f.blocked);
-            System.out.printf("  %-12s %3d pkts  %5.1f%%%s%n",
+                    ? (entry.getValue()[0] * 100.0 / totalPackets) : 0;
+            int bars = Math.min((int)(pct / 5), 12);
+            String bar = "#".repeat(bars);
+            boolean blocked = entry.getValue()[1] == 1;
+            System.out.printf("  %-12s %3d  %5.1f%%  %-14s%s%n",
                     entry.getKey(),
-                    entry.getValue(),
+                    entry.getValue()[0],
                     pct,
-                    isBlocked ? "  [BLOCKED]" : "");
+                    bar,
+                    blocked ? " [BLOCKED]" : "");
         }
 
-        System.out.println("=================================================");
-        System.out.println("         DETECTED SNIs                           ");
-        System.out.println("=================================================");
+        System.out.println(line);
+
+        // SNI/Host list
+        System.out.println(center("DETECTED DOMAINS", w));
+        System.out.println(line);
 
         flowTracker.getAllFlows().stream()
                 .filter(f -> !f.sni.isEmpty())
                 .sorted(Comparator.comparing(f -> f.sni))
-                .forEach(f -> System.out.printf("  %-35s -> %-10s%s%n",
+                .forEach(f -> System.out.printf("  %-32s %-10s%s%n",
                         f.sni, f.appType,
                         f.blocked ? " [BLOCKED]" : ""));
 
-        System.out.println("=================================================");
+        System.out.println(line);
+        System.out.printf("  Output written to: output.pcap%n");
+        System.out.printf("  Open in Wireshark to verify blocked traffic%n");
+        System.out.println(line);
+    }
+
+    private String center(String text, int width) {
+        int pad = (width - text.length()) / 2;
+        return " ".repeat(Math.max(0, pad)) + text;
     }
 }
